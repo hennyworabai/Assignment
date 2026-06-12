@@ -1,0 +1,261 @@
+---
+title: "Assignment 1a (Python) - refactor obesity dataset code"
+output: html_notebook
+---
+
+The below code downloads data from the obesity dataset from the [UC Irvine ML repository](https://doi.org/10.24432/C5H31Z). It then preprocesses the data, fits a machine-learning model and shows results. The coding style intentionally is not perfect.
+
+In this assignment you'll refactor this code using the principles taught in the Reproducible Coding practices course. Things to consider are for example:
+
+* Modularity
+* Documentation
+* Tests
+* Packaging
+* Dependencies
+* Version control
+* etc.
+
+For the full assessment criteria see the Rubric. For full details on the assignment see the `README.md`
+
+```{r}
+install.packages('httr', repos='http://cran.us.r-project.org') #I think it is better to use the 'renv' function for this packages so that they will have their own private package library.
+install.packages('readr', repos='http://cran.us.r-project.org')
+install.packages('ggplot2', repos='http://cran.us.r-project.org')
+install.packages('randomForest', repos='http://cran.us.r-project.org')
+
+```
+```{r}
+####Install renv package####
+install.packages('renv')
+renv::init()
+renv::snapshot()
+renv::status()
+```
+
+```{r}
+library(httr)
+library(readr)
+library(ggplot2)
+library(randomForest)
+```
+
+```{r}
+url <- 'https://archive.ics.uci.edu/static/public/544/estimation+of+obesity+levels+based+on+eating+habits+and+physical+condition.zip'
+
+r <- GET(url)
+
+tmp <- GET(url, write_disk('data.zip', overwrite = TRUE))
+stop_for_status(tmp)
+
+unzip('data.zip', exdir = './data')
+
+df <- read_csv('data/ObesityDataSet_raw_and_data_sinthetic.csv', show_col_types = FALSE)
+```
+
+####Keep this part, since it is used to open the .zip file.####
+
+```{r}
+df_web <- df[1:498, ]
+df_synthetic <- df[499:nrow(df), ]
+df_web
+```
+
+```{r}
+
+####Split data function####
+split_data <-function (data, cutoff = 498) {
+  list(web = data[1:cutoff, ], synthetic = data[(cutoff + 1):nrow(data), ])
+}
+```
+#allows cutoff value to be chnged describes the function and makes it more modular and reusable.
+```{r}
+X_columns <- c('Gender', 'Age', 'BMI')
+
+df_web$BMI <- df_web$Weight / (df_web$Height)^2
+df_synthetic$BMI <- df_synthetic$Weight / (df_synthetic$Height)^2
+```
+
+```{r}
+####Calculate BMI used function####
+calculate_bmi <- function(weight, height) {
+  return(weight / (height^2))
+}  # Those codes are repeated, so I think it is beter to use a function to shorten the code and make it more modular. 
+df_web$BMI <- calculate_bmi(df_web$Weight, df_web$Height)
+df_synthetic$BMI <- calculate_bmi(df_synthetic$Weight, df_synthetic$
+
+plot(df_web$BMI, type = 'l')
+```
+
+```{r}
+outcomes <- c()
+for (bmi in df_web$BMI) {
+  if (bmi < 18.5) {
+    outcomes <- c(outcomes, '0_undwerweight')
+  } else if (bmi < 25) {
+    outcomes <- c(outcomes, '1_normal')
+  } else if (bmi < 30) {
+    outcomes <- c(outcomes, '2_overweight')
+  } else {
+    outcomes <- c(outcomes, '3_obese')
+  }
+}
+
+
+df_web$label <- outcomes
+```
+
+```{r}
+####BMI labeling function####
+create_bmi_label <- function(bmi){
+  ifelse(bmi < 18.5, '0_underweight',
+         ifelse(bmi < 25, '1_normal',
+                ifelse(bmi < 30, '2_overweight', '3_obese')))
+}
+#The previous code for creating the label is a bit long and not very efficient, so I think it is better to use a function to create the label based on the BMI value. This will make the code more modular and easier to read.
+
+df_web$label <- create_bmi_label(df_web$BMI)
+```
+
+```{r}
+df_web[10:20, ]
+```
+
+```{r}
+print(colnames(df))
+
+df_web$MTRANS[df_web$MTRANS == 'Walking'] <- 1
+df_web$MTRANS[df_web$MTRANS == 'Bike'] <- 1
+df_web$MTRANS[df_web$MTRANS == 'Public_Transportation'] <- 0
+df_web$MTRANS[df_web$MTRANS == 'Automobile'] <- 0
+df_web$MTRANS[df_web$MTRANS == 'Motorbike'] <- 0
+df_web$MTRANS <- as.numeric(df_web$MTRANS)
+
+df_web$Gender[df_web$Gender == 'Male'] <- 1
+df_web$Gender[df_web$Gender == 'Female'] <- 0
+df_web$Gender <- as.numeric(df_web$Gender)
+
+Xcol_binary <- c(
+  'family_history_with_overweight',
+  'FAVC',
+  'SMOKE',
+  'SCC'
+)
+
+for (col in Xcol_binary) {
+  df_web[df_web[[col]] == 'yes', col] <- '1'
+  df_web[df_web[[col]] == 'no', col] <- '0'
+  df_web[[col]] <- as.numeric(df_web[[col]])
+}
+
+Xcol_ordinal <- c('CAEC', 'CALC')
+
+df_web$CAEC <- as.numeric(factor(df_web$CAEC, levels = c('no', 'Sometimes', 'Frequently', 'Always'))) - 1
+df_web$CALC <- as.numeric(factor(df_web$CALC, levels = c('no', 'Sometimes', 'Frequently', 'Always'))) - 1
+```
+
+```{r}
+X_columns <- c('Age', 'Gender', 'family_history_with_overweight',
+               'FAVC', 'FCVC', 'NCP', 'CAEC', 'SMOKE', 'CH2O', 'SCC', 'FAF', 'TUE',
+               'CALC', 'MTRANS')
+```
+
+## Regression problem
+
+```{r}
+classes <- sort(unique(df_web$label))
+freq <- table(df_web$label)
+class_weight <- length(df_web$label) / (length(classes) * as.numeric(freq))
+names(class_weight) <- names(freq)
+
+print(classes)
+print(class_weight)
+```
+
+```{r}
+# Note: result can deviate from the python code due to random seed!
+set.seed(42)
+idx <- seq_len(nrow(df_web))
+
+idx_train <- sample(idx, size = floor(0.7 * length(idx)))
+idx_test <- setdiff(idx, idx_train)
+
+X_train <- df_web[idx_train, X_columns]
+X_test <- df_web[idx_test, X_columns]
+y_train <- df_web$BMI[idx_train]
+y_test <- df_web$BMI[idx_test]
+
+sample_weights <- class_weight[df_web$label[idx_train]]
+```
+
+```{r}
+####train test function####
+train_test <- function(df, train_prop = 0.7, seed = 42) {
+  set.seed(seed)
+  idx <- seq_len(nrow(df))
+  
+  idx_train <- sample(idx, size = floor(train_prop * length(idx)))
+  idx_test <- setdiff(idx, idx_train)
+  
+  list(train = idx_train, test = idx_test)
+}
+
+#The code of set.seed in the previouse code is a bit long, so I change it use the function to make it simple and easy to reuse
+```
+
+
+```{r}
+reg <- lm(BMI ~ ., data = cbind(X_train, BMI = y_train))
+reg <- randomForest(x = X_train, y = y_train, ntree = 100, nodesize = 5, maxnodes = 20)
+```
+
+```{r}
+####train model function####
+train_model <- function(X_train, y_train) {
+  randomForest(x = X_train, y = y_train, ntree = 100, nodesize = 5, maxnodes = 20)
+}
+
+reg <- train_model(X_train, y_train)
+```
+
+```{r}
+preds <- predict(reg, X_test)
+
+plot(preds, y_test, pch = 16, col = rgb(0, 0, 0, 0.5))
+abline(a = 0, b = 1, col = 'red', lty = 3)
+```
+
+```{r}
+plot(predict(reg, X_train), y_train, pch = 16, col = rgb(0, 0, 0, 0.5))
+abline(a = 0, b = 1, col = 'red', lty = 3)
+```
+
+
+```{r}
+sample_weights_test <- class_weight[df_web$label[idx_test]]
+
+mae_baseline <- sum(abs(y_test - rep(mean(y_train), length(y_test))) * sample_weights_test) / sum(sample_weights_test)
+mae_model <- mean(abs(y_test - preds) * sample_weights_test)
+
+cat(sprintf('Mean absolute error (baseline): %.3f\n', mae_baseline))
+cat(sprintf('Mean absolute error: %.3f\n', mae_model))
+```
+
+```{r}
+renv::restore()
+```
+
+I apply function to avoiding code repetition (DRY) and make the code more modular and easier to understand and maintain.
+I also need package 'renv' to manage the dependencies and make sure that the code can be reproduced in the future without worrying about package versions.
+
+```{r}
+source("src//download_data.R")
+source("src//preprocess_data.R")
+source("src//bmi_functions.R")
+source("src//train_test.R")
+source("src//train_model.R")
+source("src//evaluate_model.R")
+```
+
+```{r}
+library(mypackage)
+```
